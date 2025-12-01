@@ -15,26 +15,23 @@ def __get_dir__(dirname, current):
         return os.path.join(current, dirname)
     return __get_dir__(dirname, current.parent)
 
-def __load_dfs_rec__(current, file_regex:str, dataframes: dict) -> dict:
+def __load_dfs_rec__(current, file_regex:str, dataframes: dict):
     for name in os.listdir(current):
         descriptor = os.path.join(current, name)
         if os.path.isdir(descriptor):
-            return __load_dfs_rec__(descriptor, file_regex, dataframes)
-
-        file_info = re.match(file_regex, name)
-        if file_info:
-            type = file_info.group(1)
-            df = pd.read_csv(descriptor, sep=';')
-            df = df.set_index(['epoch', 'mic'], drop=False)
-            if not type in dataframes:
-                dataframes[type] = df
-            else:
-                dataframes[type] = pd.concat([dataframes[type], df])
-
-    return dataframes
+            __load_dfs_rec__(descriptor, file_regex, dataframes)
+        else:
+            file_info = re.match(file_regex, name)
+            if file_info:
+                type = file_info.group(1)
+                df = pd.read_csv(descriptor, sep=';')
+                if not type in dataframes:
+                    dataframes[type] = df
+                else:
+                    dataframes[type] = pd.concat([dataframes[type], df])
 
 def __load_dfs__(path, file_regex:str):
-    dataframes = {'QTE': None, 'STS': None}
+    dataframes = {}
     __load_dfs_rec__(path, file_regex, dataframes)
     return dataframes
 
@@ -54,5 +51,4 @@ def load_for_isin(ISIN: str, use_small_data=False):
 
     dataframes = __load_dfs__(path, file_regex)
     __clean_dfs__(dataframes)
-
-load_for_isin('ES0113900J37', True)
+    return dataframes
