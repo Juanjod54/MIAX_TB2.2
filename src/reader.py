@@ -5,10 +5,10 @@ from pathlib import Path
 
 # Codes for continues trading
 ctc = {
-    'AQEU': [5308427],
-    'XMAD': [5832713, 5832756],
-    'CEUX': [12255233],
-    'TQEX': [7608181]
+    'AQUIS': [5308427],
+    'BME': [5832713, 5832756],
+    'CBOE': [12255233],
+    'TURQUOISE': [7608181]
 }
 
 # Codes for invalid prices
@@ -38,7 +38,7 @@ def __load_dfs_rec__(current, file_regex:str, dataframes: dict):
                 type = file_info.group(1)
                 df = pd.read_csv(descriptor, sep=';')
                 dataframes['count'] = dataframes['count'] + 1 if 'count' in dataframes else 1
-
+                df['venue'] = current.split('/')[-1].split('_')[0]
                 if not type in dataframes:
                     dataframes[type] = df
                 else:
@@ -49,8 +49,8 @@ def __load_dfs__(path, file_regex:str):
     __load_dfs_rec__(path, file_regex, dataframes)
     return dataframes
 
-def __find_continuos_trading_epochs__(dataframe, venue):
-    codes = ctc[venue]
+def __find_continuos_trading_epochs__(dataframe):
+    codes = ctc[dataframe['venue'].unique()[0]]
     venue_df = dataframe[dataframe['market_trading_status'].isin(codes)]
     opening_time = venue_df['epoch'].min()
     # Once we've found the opening time, we know next code its when market was closed
@@ -61,31 +61,58 @@ def __find_continuos_trading_epochs__(dataframe, venue):
 
 def __clean_dfs__(dataframes):
     conditions = None
-    venues = dataframes['QTE']['mic'].unique()
+    mics = dataframes['QTE']['mic'].unique()
     # Remove invalid prices
     dataframes['QTE'] = dataframes['QTE'][~dataframes['QTE'][bid_columns].isin(price_rejected_values).any(axis=1)]
     dataframes['QTE'] = dataframes['QTE'][~dataframes['QTE'][ask_columns].isin(price_rejected_values).any(axis=1)]
-    for venue in venues:
-        sts = dataframes['STS'][dataframes['STS']['mic'] == venue]
+    for mic in mics:
+        sts = dataframes['STS'][dataframes['STS']['mic'] == mic]
         # Find opening and closing times for when the markets are opened
-        market_range = __find_continuos_trading_epochs__(sts, venue)
+        market_range = __find_continuos_trading_epochs__(sts)
 
         # Remove the trades that were not done between the opening and closing times
         if conditions is None:
-            conditions = ((dataframes['QTE']['mic'] == venue) & (dataframes['QTE']['epoch'] >= market_range[0]) & (dataframes['QTE']['epoch'] < market_range[1]))
+            conditions = ((dataframes['QTE']['mic'] == mic) & (dataframes['QTE']['epoch'] >= market_range[0]) & (dataframes['QTE']['epoch'] < market_range[1]))
         else:
-            conditions = conditions | ((dataframes['QTE']['mic'] == venue) & (dataframes['QTE']['epoch'] >= market_range[0]) & (dataframes['QTE']['epoch'] < market_range[1]))
+            conditions = conditions | ((dataframes['QTE']['mic'] == mic) & (dataframes['QTE']['epoch'] >= market_range[0]) & (dataframes['QTE']['epoch'] < market_range[1]))
 
     dataframes['QTE'] = dataframes['QTE'][conditions]
 
     return dataframes
 
-def load_for_isin(ISIN: str, use_small_data=False):
+def load_for_isin(ISIN: str, use_small_data=False, debug=False):
     data_path = 'DATA_SMALL' if use_small_data else 'DATA_BIG'
     file_regex = file_pattern.replace('%ISIN%', ISIN)
     path = __get_dir__(data_path, Path(__file__))
 
     dataframes = __load_dfs__(path, file_regex)
-    dataframes = __clean_dfs__(dataframes)
-    print(f"Read {dataframes['count']} files for ISIN: {ISIN}")
-    return dataframes['QTE']
+    if 'QTE' in dataframes and 'STS' in dataframes:
+        if debug:
+            print(f"Read {dataframes['count']} files for ISIN: {ISIN}")
+
+        dataframes = __clean_dfs__(dataframes)
+        return dataframes['QTE']
+
+    return None
+
+def __get_isins_rec__(current, isins):
+    for name in os.listdir(current):
+        descriptor = os.path.join(current, name)
+        if os.path.isdir(descriptor):
+            __get_isins_rec__(descriptor, isins)
+        else:
+            file_info = re.match('(QTE|STS)_([0-9\-]+)_(.*?)_(.*?)_(.*?)_1\.csv\.gz', name)
+            if file_info:
+                isin = file_info.group(3)
+                isins[isin] = True
+
+def __get_isins__(path):
+    isins = {}
+    __get_isins_rec__(path, isins)
+    return list(isins.keys())
+
+def get_all_isins(use_small_data=False):
+    data_path = 'DATA_SMALL' if use_small_data else 'DATA_BIG'
+    path = __get_dir__(data_path, Path(__file__))
+    return __get_isins__(path)
+
