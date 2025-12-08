@@ -55,14 +55,6 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     # Formamos el dataframe con el indice = epoch y la mejor orden de compra y venta por mic, con una tolerancia de hasta 1 ms entre mics
     consolidated_dataframe = __consolidate_mics__(dataframe, mics)
 
-    if latency:
-        # Aplicamos la latencia
-        affected_columns = best_bid_cols + best_bid_qty_cols
-        # Sustituimos los valores de compra (a los que les afecta la latencia) por sus valores en 'latency' microsegundos
-        shifted_bids = consolidated_dataframe[affected_columns].shift(freq=pd.Timedelta(microseconds=latency))
-        shifted_bids = shifted_bids.reindex(consolidated_dataframe.index, fill_value=np.nan)
-        consolidated_dataframe[affected_columns] = shifted_bids
-
     min_ask_per_epoch = consolidated_dataframe[best_ask_cols].min(axis=1)
     max_bid_per_epoch = consolidated_dataframe[best_bid_cols].max(axis=1)
 
@@ -84,42 +76,23 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     different_mic = different_mic.reindex(possible_arbitrages.index, fill_value=False)
     possible_arbitrages = possible_arbitrages[different_mic]
 
-    last_arbitrage = None
-    first_occur_at = None
-    max_delay = pd.Timedelta(seconds=1)
+    latency_delta = pd.Timedelta(microseconds=latency)
     arbitrages = pd.DataFrame(columns=arbitrage_cols, index=possible_arbitrages.index)
-    for epoch, row in possible_arbitrages.iterrows():
 
+    for epoch, row in possible_arbitrages.iterrows():
         # Sacamos el mic donde esta el menor precio de venta
         ask_mic = min_ask_mic_per_epoch[epoch]
         # Sacamos el mic donde esta el mayor precio de compra
         bid_mic = max_bid_mic_per_epoch[epoch]
-        # Calculamos los valores
-        min_ask = row[f'{ask_mic}_best_ask']
-        max_bid = row[f'{bid_mic}_best_bid']
-        ask_qty = row[f'{ask_mic}_best_ask_volume']
-        bid_qty = row[f'{bid_mic}_best_bid_volume']
 
-        arbitrage = [min_ask, max_bid, ask_mic, bid_mic, min(ask_qty, bid_qty),
+        min_ask = row[f'{ask_mic}_best_ask']
+        ask_qty = row[f'{ask_mic}_best_ask_volume']
+        max_bid = consolidated_dataframe[f'{bid_mic}_best_bid'].asof(epoch + latency_delta)
+        bid_qty = consolidated_dataframe[f'{bid_mic}_best_bid_volume'].asof(epoch + latency_delta)
+
+        arbitrages.loc[epoch] = [min_ask, max_bid, ask_mic, bid_mic, min(ask_qty, bid_qty),
                                  (max_bid - min_ask) * min(ask_qty, bid_qty)]
 
-        ################################################################################
-        ## In a simulation, if an opportunity persists for 1 second (1000 snapshots), ##
-        ## you can only trade it once (the first time it appears)                     ##
-        ## if the opportunity vanishes and quickly reappears you can count it         ##
-        ## as a new opportunity for simplification                                    ##
-        ################################################################################
-
-        if (last_arbitrage is None) or (last_arbitrage != arbitrage) or ((first_occur_at + max_delay) < epoch):
-            first_occur_at = epoch
-            last_arbitrage = arbitrage
-
-            arbitrages.loc[epoch] = arbitrage
-
-    ################################################################################
-
-    ################################################################################
-    ##                              Alternativa                                   ##
     ################################################################################
     ## In a simulation, if an opportunity persists for 1 second (1000 snapshots), ##
     ## you can only trade it once (the first time it appears)                     ##
@@ -127,10 +100,11 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     ## as a new opportunity for simplification                                    ##
     ################################################################################
 
-    # Eliminamos filas repetidas en menos de 1 segundo
-    # time_delta = possible_arbitrages.index.to_series().diff()
-    # duplicated = (arbitrages[['Ask', 'Bid', 'From', 'To', 'Volume', 'Profit']] == arbitrages[['Ask', 'Bid', 'From', 'To', 'Volume', 'Profit']].shift(1)).all(axis=1)
-    # arbitrages = arbitrages[~ (duplicated & time_delta < max_delay)]
+    # Reducimos el ruido en los posibles arbitrajes (repetidos en tiempos de < 1 s)
+    time_delta = arbitrages.index.to_series().diff()
+    duplicated = (arbitrages == arbitrages.shift(1)).all(axis=1)
+    arbitrages = arbitrages[~ (duplicated & (time_delta < pd.Timedelta(seconds=1)))]
+
     ################################################################################
 
     return arbitrages
