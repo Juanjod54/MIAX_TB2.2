@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 def __consolidate_mics__(dataframe: pd.DataFrame, mics) -> pd.DataFrame:
@@ -22,7 +23,7 @@ def __consolidate_mics__(dataframe: pd.DataFrame, mics) -> pd.DataFrame:
         # En el libro de ordenes las filas vienen ordenadas
         # bid 0 -> mas alta, ask 0 -> mas baja
 
-        mic_df = _dataframe[_dataframe['mic'] == mic].drop_duplicates(subset='date_time', keep='last')
+        mic_df = _dataframe[_dataframe['mic'] == mic]
 
         best_asks = mic_df['px_ask_0']
         best_bids = mic_df['px_bid_0']
@@ -48,15 +49,17 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     mics = dataframe['mic'].unique()
     best_ask_cols = [f'{mic}_best_ask' for mic in mics]
     best_bid_cols = [f'{mic}_best_bid' for mic in mics]
+    best_bid_qty_cols = [f'{mic}_best_bid_volume' for mic in mics]
     # Formamos el dataframe con el indice = epoch y la mejor orden de compra y venta por mic, con una tolerancia de hasta 1 ms entre mics
     consolidated_dataframe = __consolidate_mics__(dataframe, mics)
 
-    # Aplicamos la latencia
-    # Sustituimos los valores de compra (a los que les afecta la latencia) por sus valores en 'latency' microsegundos
-    # shifted_bids = possible_arbitrages[best_bid_cols]
-    # shifted_bids.index = shifted_bids.index + pd.Timedelta(microseconds=latency)
-    # shifted_bids = shifted_bids.reindex(possible_arbitrages.index, fill_value=0)
-    # possible_arbitrages[best_bid_cols] = shifted_bids
+    if latency:
+        # Aplicamos la latencia
+        affected_columns = best_bid_cols + best_bid_qty_cols
+        # Sustituimos los valores de compra (a los que les afecta la latencia) por sus valores en 'latency' microsegundos
+        shifted_bids = consolidated_dataframe[affected_columns].shift(freq=pd.Timedelta(microseconds=latency))
+        shifted_bids = shifted_bids.reindex(consolidated_dataframe.index, fill_value=np.nan)
+        consolidated_dataframe[affected_columns] = shifted_bids
 
     min_ask_per_epoch = consolidated_dataframe[best_ask_cols].min(axis=1)
     max_bid_per_epoch = consolidated_dataframe[best_bid_cols].max(axis=1)
