@@ -3,8 +3,9 @@ import pandas as pd
 
 def __consolidate_mics__(dataframe: pd.DataFrame, mics, latency) -> pd.DataFrame:
     tolerance = pd.Timedelta(microseconds=1000)
-    _dataframe = dataframe.copy()[['mic', 'epoch', 'px_ask_0', 'px_bid_0', 'qty_ask_0', 'qty_bid_0', 'ord_ask_0', 'ord_bid_0']]
-    _dataframe['date_time'] = pd.to_datetime(_dataframe['epoch'].astype('int64'), unit='us')
+    columns = ['mic', 'px_ask_0', 'px_bid_0', 'qty_ask_0', 'qty_bid_0', 'ord_ask_0', 'ord_bid_0']
+    _dataframe = dataframe.copy()[columns]
+    _dataframe['date_time'] = pd.to_datetime(dataframe['epoch'].astype('int64'), unit='us')
     _dataframe = _dataframe.drop_duplicates(subset='date_time', keep='last')
     bests_df = pd.DataFrame(_dataframe['date_time'])
     for mic in mics:
@@ -23,6 +24,16 @@ def __consolidate_mics__(dataframe: pd.DataFrame, mics, latency) -> pd.DataFrame
 
         mic_df = _dataframe[_dataframe['mic'] == mic]
 
+        ## In a simulation, if an opportunity persists for 1 second (1000 snapshots), ##
+        ## you can only trade it once (the first time it appears) ##
+
+        # Calculamos la diferencia de segundos entre filas
+        time_diff = mic_df['date_time'].diff().dt.total_seconds()
+        # Comprobamos si todas las columnas son iguales y el tiempo es inferior a 1 segundo
+        is_duplicated = (mic_df[columns] == mic_df[columns].shift()).all(axis=1) & (time_diff < 1)
+        # Descartamos los valores
+        mic_df = mic_df[~is_duplicated]
+
         best_asks = mic_df['px_ask_0']
         best_bids = mic_df['px_bid_0']
         best_ask_volumes = mic_df['qty_ask_0']
@@ -38,9 +49,11 @@ def __consolidate_mics__(dataframe: pd.DataFrame, mics, latency) -> pd.DataFrame
         )
 
         # Aplicar la latencia a las compras
-        # consolidated_shifted = consolidated.set_index('date_time').sort_index()
-        # consolidated_shifted[[best_bid_col, best_bid_vol_col]] = consolidated_shifted[[best_bid_col, best_bid_vol_col]].shift(freq=pd.Timedelta(microseconds=latency))
-        # consolidated = consolidated_shifted.reset_index().sort_values(by='date_time')
+        consolidated_shifted = consolidated.set_index('date_time').sort_index()
+        # Sustituimos los valores de compra (a los que les afecta la latencia) por sus valores en 'latency' microsegundos
+        consolidated_shifted[[best_bid_col, best_bid_vol_col]] = consolidated_shifted[[best_bid_col, best_bid_vol_col]].shift(freq=pd.Timedelta(microseconds=latency))
+        # Eliminamos el indice temporal para poder hacer el merge
+        consolidated = consolidated_shifted.reset_index().sort_values(by='date_time')
 
         bests_df = bests_df.sort_values('date_time')
         consolidated = consolidated.sort_values('date_time')
@@ -60,11 +73,11 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     max_bid_per_epoch = consolidated_dataframe[best_bid_cols].max(axis=1)
     # Nos quedamos con los que pueden ser arbitrajes para reducir la busqueda
     bid_gt_ask = (max_bid_per_epoch > min_ask_per_epoch)
-    bid_gt_ask.reindex(consolidated_dataframe.index, fill_value=False)
+    bid_gt_ask = bid_gt_ask.reindex(consolidated_dataframe.index, fill_value=False)
     possible_arbitrages = consolidated_dataframe[bid_gt_ask]
     # Obtenemos donde estan los min ask y max bid por epoch
-    min_ask_mic_per_epoch = possible_arbitrages[best_ask_cols].dropna().idxmin(axis=1)
-    max_bid_mic_per_epoch = possible_arbitrages[best_bid_cols].dropna().idxmax(axis=1)
+    min_ask_mic_per_epoch = possible_arbitrages[best_ask_cols].idxmin(axis=1, skipna=True)
+    max_bid_mic_per_epoch = possible_arbitrages[best_bid_cols].idxmax(axis=1, skipna=True)
     # Sacamos los mics
     min_ask_mic_per_epoch = min_ask_mic_per_epoch.apply(lambda v: v.split('_')[0] if pd.notna(v) else None)
     max_bid_mic_per_epoch = max_bid_mic_per_epoch.apply(lambda v: v.split('_')[0] if pd.notna(v) else None)
