@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+arbitrage_cols = ['Ask', 'Bid', 'From', 'To', 'Volume', 'Profit']
+
 def __consolidate_mics__(dataframe: pd.DataFrame, mics) -> pd.DataFrame:
     tolerance = pd.Timedelta(microseconds=1000)
     _dataframe = dataframe.copy()[['mic', 'px_ask_0', 'px_bid_0', 'qty_ask_0', 'qty_bid_0']]
@@ -85,7 +87,6 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     last_arbitrage = None
     first_occur_at = None
     max_delay = pd.Timedelta(seconds=1)
-    arbitrage_cols = ['Ask', 'Bid', 'From', 'To', 'Volume', 'Profit']
     arbitrages = pd.DataFrame(columns=arbitrage_cols, index=possible_arbitrages.index)
     for epoch, row in possible_arbitrages.iterrows():
 
