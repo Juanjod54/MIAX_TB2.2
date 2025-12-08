@@ -1,7 +1,6 @@
 import pandas as pd
 
-
-def __consolidate_mics__(dataframe: pd.DataFrame, mics, latency) -> pd.DataFrame:
+def __consolidate_mics__(dataframe: pd.DataFrame, mics) -> pd.DataFrame:
     tolerance = pd.Timedelta(microseconds=1000)
     columns = ['mic', 'px_ask_0', 'px_bid_0', 'qty_ask_0', 'qty_bid_0', 'ord_ask_0', 'ord_bid_0']
     _dataframe = dataframe.copy()[columns]
@@ -48,13 +47,6 @@ def __consolidate_mics__(dataframe: pd.DataFrame, mics, latency) -> pd.DataFrame
             }
         )
 
-        # Aplicar la latencia a las compras
-        consolidated_shifted = consolidated.set_index('date_time').sort_index()
-        # Sustituimos los valores de compra (a los que les afecta la latencia) por sus valores en 'latency' microsegundos
-        consolidated_shifted[[best_bid_col, best_bid_vol_col]] = consolidated_shifted[[best_bid_col, best_bid_vol_col]].shift(freq=pd.Timedelta(microseconds=latency))
-        # Eliminamos el indice temporal para poder hacer el merge
-        consolidated = consolidated_shifted.reset_index().sort_values(by='date_time')
-
         bests_df = bests_df.sort_values('date_time')
         consolidated = consolidated.sort_values('date_time')
         bests_df = pd.merge_asof(bests_df, consolidated, on='date_time', direction='backward', tolerance=tolerance)
@@ -67,7 +59,7 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     best_ask_cols = [f'{mic}_best_ask' for mic in mics]
     best_bid_cols = [f'{mic}_best_bid' for mic in mics]
     # Formamos el dataframe con el indice = epoch y la mejor orden de compra y venta por mic, con una tolerancia de hasta 1 ms entre mics
-    consolidated_dataframe = __consolidate_mics__(dataframe, mics, latency)
+    consolidated_dataframe = __consolidate_mics__(dataframe, mics)
 
     min_ask_per_epoch = consolidated_dataframe[best_ask_cols].min(axis=1)
     max_bid_per_epoch = consolidated_dataframe[best_bid_cols].max(axis=1)
@@ -85,6 +77,13 @@ def find_arbitrage(dataframe: pd.DataFrame, latency=0):
     different_mic = (max_bid_mic_per_epoch != min_ask_mic_per_epoch)
     different_mic = different_mic.reindex(possible_arbitrages.index, fill_value=False)
     possible_arbitrages = possible_arbitrages[different_mic]
+
+    # Aplicamos la latencia. Es el supuesto en el que hemos visto las ordenes, hemos decidido actuar y ahora tenemos latencia.
+    # Sustituimos los valores de compra (a los que les afecta la latencia) por sus valores en 'latency' microsegundos
+    shifted_bids = possible_arbitrages[best_bid_cols]
+    shifted_bids.index = shifted_bids.index + pd.Timedelta(microseconds=latency)
+    shifted_bids = shifted_bids.reindex(possible_arbitrages.index, fill_value=0)
+    possible_arbitrages[best_bid_cols] = shifted_bids
 
     arbitrage_cols = ['Ask', 'Bid', 'From', 'To', 'Volume', 'Profit']
     arbitrages = pd.DataFrame(columns=arbitrage_cols, index=possible_arbitrages.index)
