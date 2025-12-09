@@ -38,7 +38,7 @@ def __load_dfs_rec__(current, file_regex:str, dataframes: dict):
                 type = file_info.group(1)
                 df = pd.read_csv(descriptor, sep=';')
                 dataframes['count'] = dataframes['count'] + 1 if 'count' in dataframes else 1
-                df['venue'] = current.split('/')[-1].split('_')[0]
+                df['venue'] = current.split(os.sep)[-1].split('_')[0]
                 if not type in dataframes:
                     dataframes[type] = df
                 else:
@@ -61,6 +61,8 @@ def __find_continuos_trading_epochs__(dataframe):
 
 def __clean_dfs__(dataframes):
     conditions = None
+    # Como hemos hecho concat de varios dfs, es posible que los indices esten repetidos (por cada df)
+    dataframes['QTE'] = dataframes['QTE'].reset_index(drop=True)
     mics = dataframes['QTE']['mic'].unique()
     # Remove invalid prices
     dataframes['QTE'] = dataframes['QTE'][~dataframes['QTE'][bid_columns].isin(price_rejected_values).any(axis=1)]
@@ -77,6 +79,8 @@ def __clean_dfs__(dataframes):
             conditions = conditions | ((dataframes['QTE']['mic'] == mic) & (dataframes['QTE']['epoch'] >= market_range[0]) & (dataframes['QTE']['epoch'] < market_range[1]))
 
     dataframes['QTE'] = dataframes['QTE'][conditions]
+    max_seq_indexes = (dataframes['QTE'].groupby(by=['epoch', 'mic']))['sequence'].idxmax()
+    dataframes['QTE'] = dataframes['QTE'].loc[max_seq_indexes]
 
     return dataframes
 
